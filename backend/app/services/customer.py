@@ -12,23 +12,58 @@ ACTION_RULES = {"审核客户": "合作中", "暂停合作": "已暂停", "终�
 NEGATIVE_ACTIONS = []
 
 
+def _normalized(value: str | None) -> str:
+    return str(value or "").strip()
+
+
+def _contains(row: dict[str, Any], field: str, keyword: str) -> bool:
+    return keyword.casefold() in str(row.get(field) or "").casefold()
+
+
 class CustomerService:
     def list_entries(
         self,
         *,
+        customer_code: str | None = None,
+        customer_name: str | None = None,
+        customer_type: str | None = None,
+        type_alias: str | None = None,
         keyword: str | None = None,
+        code: str | None = None,
+        name: str | None = None,
         status: str | None = None,
         page: int = 1,
         size: int = 20,
     ) -> tuple[list[dict[str, Any]], int]:
-        rows = store.rows(MODULE)
-        if keyword:
-            rows = [row for row in rows if keyword in str(row.get("客户编码", ""))]
-        if status:
-            rows = [row for row in rows if row.get("status") == status]
-        total = len(rows)
+        rows = sorted(store.rows(MODULE), key=lambda row: int(row.get("id", 0)))
+        code_keyword = _normalized(customer_code) or _normalized(code) or _normalized(keyword)
+        name_keyword = _normalized(customer_name) or _normalized(name)
+        type_keyword = _normalized(customer_type) or _normalized(type_alias)
+        status_value = _normalized(status)
+
+        if code_keyword:
+            rows = [row for row in rows if _contains(row, "客户编码", code_keyword)]
+        if name_keyword:
+            rows = [row for row in rows if _contains(row, "客户名称", name_keyword)]
+        if type_keyword:
+            rows = [row for row in rows if _contains(row, "客户类型", type_keyword)]
+        if status_value:
+            rows = [row for row in rows if str(row.get("status") or "") == status_value]
+
+        # 客户编码是档案的业务唯一键；异常数据若出现重码，只保留一条，避免分页时重复展示。
+        unique_rows: list[dict[str, Any]] = []
+        seen_codes: set[str] = set()
+        for row in rows:
+            customer_code_value = _normalized(str(row.get("客户编码") or ""))
+            dedupe_key = customer_code_value or f"id:{row.get('id')}"
+            if dedupe_key in seen_codes:
+                continue
+            seen_codes.add(dedupe_key)
+            unique_rows.append(row)
+
+        total = len(unique_rows)
         start = max(page - 1, 0) * size
-        return rows[start:start + size], total
+        return unique_rows[start:start + size], total
 
     def get_entry(self, entry_id: int) -> dict[str, Any] | None:
         return store.find(MODULE, entry_id)

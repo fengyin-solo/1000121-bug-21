@@ -18,10 +18,10 @@
       </article>
     </div>
 
-    <form class="filter-bar" @submit.prevent="reload">
-      <label v-for="field in filterFields" :key="field" class="filter-item">
-        <span>{{ field }}</span>
-        <input v-model="filters[field]" :placeholder="`按${field}检索`" />
+    <form class="filter-bar" @submit.prevent="applyFilters">
+      <label v-for="field in filterFields" :key="field.key" class="filter-item">
+        <span>{{ field.label }}</span>
+        <input v-model="filters[field.key]" :placeholder="`按${field.label}检索`" />
       </label>
       <button class="btn" type="submit">查询</button>
       <button class="btn ghost" type="button" @click="resetFilters">重置条件</button>
@@ -38,6 +38,7 @@
         <tr v-for="row in rows" :key="String(row.id)">
           <td v-for="column in columns" :key="column">{{ row[column] ?? '—' }}</td>
           <td class="row-actions">
+            <RouterLink class="link" :to="detailHref(row)">查看详情</RouterLink>
             <button
               v-for="action in actions"
               :key="action"
@@ -57,37 +58,178 @@
 
     <footer class="page-foot">
       <span>共 {{ total }} 条客户管理记录</span>
+      <div class="pagination">
+        <button class="btn" type="button" :disabled="page <= 1 || loading" @click="goPage(page - 1)">上一页</button>
+        <span>第 {{ page }} / {{ totalPages }} 页</span>
+        <label>
+          每页
+          <select :value="size" @change="changeSize">
+            <option v-for="option in pageSizeOptions" :key="option" :value="option">{{ option }} 条</option>
+          </select>
+        </label>
+        <button class="btn" type="button" :disabled="page >= totalPages || loading" @click="goPage(page + 1)">下一页</button>
+      </div>
       <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
     </footer>
   </section>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 
 import { request } from '@/api/client'
 
 type Row = Record<string, string | number | null>
+type PageResult = {
+  items?: Row[]
+  total?: number
+  page?: number
+  size?: number
+}
 
 const ENDPOINT = '/api/customer'
-const columns = ["客户编码", "客户名称", "客户类型", "联系人", "联系电话", "结算方式", "合作状态"]
-const actions = ["审核客户", "暂停合作", "终止合作"]
-const statuses = ["待审核", "合作中", "已暂停", "已终止"]
-const stats = [{"label": "合作客户", "value": 0}, {"label": "待审核客户", "value": 0}, {"label": "本月新增客户", "value": 0}]
+const columns = ['客户编码', '客户名称', '客户类型', '联系人', '联系电话', '结算方式', '合作状态']
+const actions = ['审核客户', '暂停合作', '终止合作']
+const statuses = ['待审核', '合作中', '已暂停', '已终止']
+const stats = [{ label: '合作客户', value: 0 }, { label: '待审核客户', value: 0 }, { label: '本月新增客户', value: 0 }]
+const filterFields = [
+  { label: '客户编码', key: 'customer_code' },
+  { label: '客户名称', key: 'customer_name' },
+  { label: '客户类型', key: 'customer_type' },
+] as const
+const pageSizeOptions = [10, 20, 50, 100]
+
+const route = useRoute()
+const router = useRouter()
 
 const rows = ref<Row[]>([])
 const total = ref(0)
+const page = ref(1)
+const size = ref(20)
+const loading = ref(false)
+let loadSequence = 0
 const errorMessage = ref('')
-const filters = ref<Record<string, string>>({})
-const filterFields = columns.slice(0, 3)
+const filters = ref<Record<string, string>>({
+  customer_code: '',
+  customer_name: '',
+  customer_type: '',
+})
+
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / size.value)))
+
+function queryText(key: string) {
+  const value = route.query[key]
+  return Array.isArray(value) ? value[0] ?? '' : value ?? ''
+}
+
+function syncFromRoute() {
+  filters.value = {
+    customer_code: queryText('customer_code'),
+    customer_name: queryText('customer_name'),
+    customer_type: queryText('customer_type'),
+  }
+  page.value = Math.max(Number.parseInt(queryText('page')) || 1, 1)
+  size.value = Math.min(Math.max(Number.parseInt(queryText('size')) || 20, 1), 200)
+}
+
+function activeFilters() {
+  const query: Record<string, string> = {}
+  for (const field of filterFields) {
+    const value = filters.value[field.key].trim()
+    if (value) {
+      query[field.key] = value
+    }
+  }
+  return query
+}
+
+function listQuery(forCurrentPage: boolean) {
+  const query = activeFilters()
+  if (forCurrentPage) {
+    query.page = String(page.value)
+    query.size = String(size.value)
+  }
+  return new URLSearchParams(query)
+}
+
+async function loadRows() {
+  const sequence = ++loadSequence
+  loading.value = true
+  errorMessage.value = ''
+  const query = listQuery(true).toString()
+  try {
+    const response = await request(`${ENDPOINT}?${query}`)
+    if (!response.ok) {
+      throw new Error('客户档案列表读取失败')
+    }
+    const payload = (await response.json()) as PageResult
+    if (sequence !== loadSequence) {
+      return
+    }
+    rows.value = payload.items ?? []
+    total.value = payload.total ?? rows.value.length
+    page.value = payload.page ?? page.value
+    size.value = payload.size ?? size.value
+
+    const lastPage = Math.max(1, Math.ceil(total.value / size.value))
+    if (total.value > 0 && page.value > lastPage) {
+      await router.replace({ name: 'customer', query: { ...activeFilters(), page: String(lastPage), size: String(size.value) } })
+      return
+    }
+  } catch (error) {
+    if (sequence !== loadSequence) {
+      return
+    }
+    errorMessage.value = error instanceof Error ? error.message : '客户管理列表读取失败'
+  } finally {
+    if (sequence === loadSequence) {
+      loading.value = false
+    }
+  }
+}
+
+function applyFilters() {
+  void router.push({
+    name: 'customer',
+    query: { ...activeFilters(), page: '1', size: String(size.value) },
+  })
+}
 
 function resetFilters() {
-  filters.value = {}
-  void reload()
+  void router.push({ name: 'customer', query: { page: '1', size: String(size.value) } })
+}
+
+function goPage(targetPage: number) {
+  if (targetPage < 1 || targetPage > totalPages.value) {
+    return
+  }
+  void router.push({
+    name: 'customer',
+    query: { ...activeFilters(), page: String(targetPage), size: String(size.value) },
+  })
+}
+
+function changeSize(event: Event) {
+  const targetSize = Number((event.target as HTMLSelectElement).value)
+  size.value = targetSize
+  void router.push({
+    name: 'customer',
+    query: { ...activeFilters(), page: '1', size: String(targetSize) },
+  })
+}
+
+function detailHref(row: Row) {
+  return {
+    name: 'customer-detail',
+    params: { id: String(row.id) },
+    query: { returnTo: route.fullPath },
+  }
 }
 
 function exportRows() {
-  window.open(`${ENDPOINT}/export`, '_blank')
+  const query = listQuery(false).toString()
+  window.open(query ? `${ENDPOINT}/export?${query}` : `${ENDPOINT}/export`, '_blank')
 }
 
 function openCreate() {
@@ -104,27 +246,14 @@ async function runAction(action: string, row: Row) {
     if (!response.ok) {
       throw new Error('客户管理动作未生效，请稍后重试')
     }
-    await reload()
+    await loadRows()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '客户管理操作失败'
   }
 }
 
-async function reload() {
-  errorMessage.value = ''
-  const query = new URLSearchParams(filters.value as Record<string, string>).toString()
-  try {
-    const response = await request(`${ENDPOINT}?${query}`)
-    if (!response.ok) {
-      throw new Error('客户档案列表读取失败')
-    }
-    const payload = await response.json()
-    rows.value = payload.items ?? []
-    total.value = payload.total ?? rows.value.length
-  } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '客户管理列表读取失败'
-  }
-}
-
-onMounted(reload)
+watch(() => route.fullPath, () => {
+  syncFromRoute()
+  void loadRows()
+}, { immediate: true })
 </script>

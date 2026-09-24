@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Request
 
 from app.schemas import ActionResult, EntryPayload, PageResult
 from app.services.customer import CustomerService
@@ -16,18 +16,53 @@ LIST_FIELDS = ["客户编码", "客户名称", "客户类型", "联系人", "联
 STATUSES = ["待审核", "合作中", "已暂停", "已终止"]
 
 
-@router.get("", response_model=PageResult[dict])
-def list_entries(
-    keyword: str | None = Query(default=None, description="按客户编码检索"),
-    status: str | None = Query(default=None, description="待审核、合作中、已暂停、已终止"),
-    page: int = 1,
-    size: int = 20,
-) -> PageResult[dict]:
-    """按客户编码与状态过滤客户管理列表；没有数据时返回空页，不报错。"""
+def _first_param(request: Request, *names: str) -> str | None:
+    """兼容既有中文参数、历史 keyword 参数和当前前后端约定参数。"""
+    for name in names:
+        value = request.query_params.get(name)
+        if value and value.strip():
+            return value.strip()
+    return None
+
+
+def _list_filters(request: Request) -> dict[str, str | None]:
+    return {
+        "customer_code": _first_param(request, "customer_code", "customerCode", "code", "客户编码", "keyword"),
+        "customer_name": _first_param(request, "customer_name", "customerName", "name", "客户名称"),
+        "customer_type": _first_param(request, "customer_type"),
+        "type_alias": _first_param(request, "customerType", "type", "客户类型"),
+        "status": _first_param(request, "status"),
+    }
+
+
+def _pagination(request: Request) -> tuple[int, int]:
+    try:
+        page = int(request.query_params.get("page", "1"))
+        size = int(request.query_params.get("size", "20"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="页码和每页条数必须是数字") from exc
+    if page < 1:
+        raise HTTPException(status_code=400, detail="页码必须从 1 开始")
+    if size < 1:
+        raise HTTPException(status_code=400, detail="每页条数至少为 1")
     if size > 200:
         raise HTTPException(status_code=400, detail="每页最多 200 条，请缩小分页范围")
-    items, total = service.list_entries(keyword=keyword, status=status, page=page, size=size)
+    return page, size
+
+
+@router.get("", response_model=PageResult[dict])
+def list_entries(request: Request) -> PageResult[dict]:
+    """按客户编码、客户名称、客户类型与状态过滤客户管理列表；没有数据时返回空页，不报错。"""
+    page, size = _pagination(request)
+    items, total = service.list_entries(page=page, size=size, **_list_filters(request))
     return PageResult(items=items, total=total, page=page, size=size)
+
+
+@router.get("/export")
+def export_entries(request: Request) -> dict[str, Any]:
+    """导出客户管理清单：返回当前筛选条件下的全量数据。"""
+    items, total = service.list_entries(page=1, size=10000, **_list_filters(request))
+    return {"module": "customer", "total": total, "items": items}
 
 
 @router.get("/{entry_id}", response_model=dict)
@@ -56,10 +91,3 @@ def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
     if entry is None:
         return ActionResult(ok=False, message=message)
     return ActionResult(ok=True, message=message, entry=entry)
-
-
-@router.get("/export")
-def export_entries() -> dict[str, Any]:
-    """导出客户管理清单：返回当前过滤条件下的全量数据。"""
-    items, total = service.list_entries(page=1, size=10000)
-    return {"module": "customer", "total": total, "items": items}
