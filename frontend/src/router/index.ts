@@ -19,6 +19,7 @@ const Device = () => import('@/views/device/index.vue')
 const Maint = () => import('@/views/maint/index.vue')
 const Alarm = () => import('@/views/alarm/index.vue')
 const Customer = () => import('@/views/customer/index.vue')
+const CustomerDetail = () => import('@/views/customer/detail.vue')
 const Billing = () => import('@/views/billing/index.vue')
 const Report = () => import('@/views/report/index.vue')
 const Setting = () => import('@/views/setting/index.vue')
@@ -45,6 +46,7 @@ const router = createRouter({
     { path: '/maint', name: 'maint', component: Maint },
     { path: '/alarm', name: 'alarm', component: Alarm },
     { path: '/customer', name: 'customer', component: Customer },
+    { path: '/customer/:id', name: 'customer-detail', component: CustomerDetail },
     { path: '/billing', name: 'billing', component: Billing },
     { path: '/report', name: 'report', component: Report },
     { path: '/setting', name: 'setting', component: Setting },

@@ -16,18 +16,54 @@ LIST_FIELDS = ["客户编码", "客户名称", "客户类型", "联系人", "联
 STATUSES = ["待审核", "合作中", "已暂停", "已终止"]
 
 
+def _validate_page(page: int, size: int) -> None:
+    if page < 1:
+        raise HTTPException(status_code=400, detail="页码需从 1 开始")
+    if size < 1:
+        raise HTTPException(status_code=400, detail="每页条数需大于 0")
+    if size > 200:
+        raise HTTPException(status_code=400, detail="每页最多 200 条，请缩小分页范围")
+
+
 @router.get("", response_model=PageResult[dict])
 def list_entries(
-    keyword: str | None = Query(default=None, description="按客户编码检索"),
+    keyword: str | None = Query(default=None, description="按客户编码模糊检索"),
+    name: str | None = Query(default=None, description="按客户名称模糊检索"),
+    customer_type: str | None = Query(default=None, description="按客户类型精确筛选"),
     status: str | None = Query(default=None, description="待审核、合作中、已暂停、已终止"),
     page: int = 1,
     size: int = 20,
 ) -> PageResult[dict]:
-    """按客户编码与状态过滤客户管理列表；没有数据时返回空页，不报错。"""
-    if size > 200:
-        raise HTTPException(status_code=400, detail="每页最多 200 条，请缩小分页范围")
-    items, total = service.list_entries(keyword=keyword, status=status, page=page, size=size)
+    """按客户编码、客户名称、客户类型与合作状态过滤客户列表；没有数据时返回空页，不报错。"""
+    _validate_page(page, size)
+    items, total = service.list_entries(
+        keyword=keyword,
+        name=name,
+        customer_type=customer_type,
+        status=status,
+        page=page,
+        size=size,
+    )
     return PageResult(items=items, total=total, page=page, size=size)
+
+
+@router.get("/export")
+def export_entries(
+    keyword: str | None = None,
+    name: str | None = None,
+    customer_type: str | None = None,
+    status: str | None = None,
+) -> dict[str, Any]:
+    """导出客户管理清单：返回当前过滤条件下的全量数据，筛选口径与列表接口保持一致。"""
+    items, total = service.list_entries(
+        keyword=keyword,
+        name=name,
+        customer_type=customer_type,
+        status=status,
+        page=1,
+        size=10000,
+    )
+    return {"module": "customer", "total": total, "items": items}
 
 
 @router.get("/{entry_id}", response_model=dict)
@@ -56,10 +92,3 @@ def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
     if entry is None:
         return ActionResult(ok=False, message=message)
     return ActionResult(ok=True, message=message, entry=entry)
-
-
-@router.get("/export")
-def export_entries() -> dict[str, Any]:
-    """导出客户管理清单：返回当前过滤条件下的全量数据。"""
-    items, total = service.list_entries(page=1, size=10000)
-    return {"module": "customer", "total": total, "items": items}

@@ -12,20 +12,33 @@ ACTION_RULES = {"审核客户": "合作中", "暂停合作": "已暂停", "终�
 NEGATIVE_ACTIONS = []
 
 
+def _row_status(row: dict[str, Any]) -> str:
+    """合作状态同时落在「合作状态」展示字段与「status」流转字段上，筛选取一致口径。"""
+    return str(row.get("合作状态") or row.get("status") or "")
+
+
 class CustomerService:
     def list_entries(
         self,
         *,
         keyword: str | None = None,
+        name: str | None = None,
+        customer_type: str | None = None,
         status: str | None = None,
         page: int = 1,
         size: int = 20,
     ) -> tuple[list[dict[str, Any]], int]:
-        rows = store.rows(MODULE)
+        rows = sorted(store.rows(MODULE), key=lambda row: int(row.get("id", 0)))
         if keyword:
-            rows = [row for row in rows if keyword in str(row.get("客户编码", ""))]
+            code = keyword.strip()
+            rows = [row for row in rows if code in str(row.get("客户编码", ""))]
+        if name:
+            customer_name = name.strip()
+            rows = [row for row in rows if customer_name in str(row.get("客户名称", ""))]
+        if customer_type:
+            rows = [row for row in rows if str(row.get("客户类型", "")) == customer_type.strip()]
         if status:
-            rows = [row for row in rows if row.get("status") == status]
+            rows = [row for row in rows if _row_status(row) == status]
         total = len(rows)
         start = max(page - 1, 0) * size
         return rows[start:start + size], total
@@ -41,6 +54,7 @@ class CustomerService:
         entry = {"id": max((int(row.get("id", 0)) for row in rows), default=0) + 1}
         entry.update({field: values.get(field) for field in REQUIRED_FIELDS})
         entry["status"] = STATUS_ORDER[0]
+        entry["合作状态"] = STATUS_ORDER[0]
         entry["pending"] = True
         entry["abnormal"] = False
         rows.append(entry)
@@ -56,6 +70,7 @@ class CustomerService:
         if target not in STATUS_ORDER:
             return None, f"目标状态「{target}」不在允许的状态序列里"
         entry["status"] = target
+        entry["合作状态"] = target
         entry["pending"] = target != STATUS_ORDER[-1]
         entry["abnormal"] = action in NEGATIVE_ACTIONS
         return entry, f"客户档案已{action}"

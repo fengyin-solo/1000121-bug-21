@@ -3,6 +3,55 @@ from __future__ import annotations
 
 from typing import Any
 
+
+def _customer_rows() -> list[dict[str, Any]]:
+    """构造客户档案样例：同一客户名称刻意出现多条，覆盖各客户类型与合作状态，
+    便于验证按编码/名称检索、类型高级筛选与分页是否稳定。"""
+    specs: list[tuple[str, str, str, str, str, str, bool, bool]] = [
+        # (客户编码, 客户名称, 客户类型, 联系人, 联系电话, 合作状态, pending, abnormal)
+        ("CUST-0001", "鲜达连锁餐饮", "连锁餐饮", "张晨", "13800010001", "待审核", True, False),
+        ("CUST-0002", "鲜达连锁餐饮", "连锁餐饮", "李娜", "13800010002", "合作中", True, True),
+        ("CUST-0003", "鲜达连锁餐饮", "连锁餐饮", "王磊", "13800010003", "已暂停", False, False),
+        ("CUST-0004", "康源食品加工厂", "食品加工", "赵敏", "13800010004", "合作中", True, False),
+        ("CUST-0005", "康源食品加工厂", "食品加工", "陈静", "13800010005", "已终止", False, False),
+        ("CUST-0006", "百草堂医药", "医药流通", "周涛", "13800010006", "待审核", True, False),
+        ("CUST-0007", "百草堂医药", "医药流通", "吴芳", "13800010007", "合作中", True, False),
+        ("CUST-0008", "北山大卖场", "商超零售", "郑凯", "13800010008", "合作中", True, False),
+    ]
+    type_pool = ["连锁餐饮", "食品加工", "医药流通", "商超零售", "生鲜电商", "中央厨房"]
+    name_pool = ["云厨生鲜电商", "佳味中央厨房", "海纳商超", "安心医药配送", "绿野食品"]
+    status_pool = ["待审核", "合作中", "已暂停", "已终止"]
+    rows: list[dict[str, Any]] = []
+    for index in range(9, 26):
+        name = name_pool[(index - 9) % len(name_pool)]
+        status = status_pool[(index - 9) % len(status_pool)]
+        specs.append((
+            f"CUST-{index:04d}",
+            name,
+            type_pool[index % len(type_pool)],
+            f"联系人{index}",
+            f"138{index:08d}",
+            status,
+            status != "已终止",
+            status == "已暂停",
+        ))
+    for seq, (code, name, customer_type, contact, phone, status, pending, abnormal) in enumerate(specs, start=1):
+        rows.append({
+            "id": seq,
+            "status": status,
+            "pending": pending,
+            "abnormal": abnormal,
+            "客户编码": code,
+            "客户名称": name,
+            "客户类型": customer_type,
+            "联系人": contact,
+            "联系电话": phone,
+            "结算方式": "月结30天" if seq % 2 else "货到付款",
+            "合作状态": status,
+        })
+    return rows
+
+
 SEED_ROWS: dict[str, list[dict[str, Any]]] = {
     "order": [{'id': 1,
   'status': '待受理',
@@ -580,39 +629,7 @@ SEED_ROWS: dict[str, list[dict[str, Any]]] = {
   '触发时间': '2026-09-03',
   '处理状态': '告警中心样例3',
   '处理人': '告警中心样例3'}],
-    "customer": [{'id': 1,
-  'status': '待审核',
-  'pending': True,
-  'abnormal': False,
-  '客户编码': 'CUST-0001',
-  '客户名称': '客户管理样例1',
-  '客户类型': '客户管理样例1',
-  '联系人': '客户管理样例1',
-  '联系电话': '13800000001',
-  '结算方式': '客户管理样例1',
-  '合作状态': '客户管理样例1'},
- {'id': 2,
-  'status': '合作中',
-  'pending': True,
-  'abnormal': True,
-  '客户编码': 'CUST-0002',
-  '客户名称': '客户管理样例2',
-  '客户类型': '客户管理样例2',
-  '联系人': '客户管理样例2',
-  '联系电话': '13800000002',
-  '结算方式': '客户管理样例2',
-  '合作状态': '客户管理样例2'},
- {'id': 3,
-  'status': '已暂停',
-  'pending': False,
-  'abnormal': False,
-  '客户编码': 'CUST-0003',
-  '客户名称': '客户管理样例3',
-  '客户类型': '客户管理样例3',
-  '联系人': '客户管理样例3',
-  '联系电话': '13800000003',
-  '结算方式': '客户管理样例3',
-  '合作状态': '客户管理样例3'}],
+    "customer": _customer_rows(),
     "billing": [{'id': 1,
   'status': '待核算',
   'pending': True,
